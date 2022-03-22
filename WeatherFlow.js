@@ -44,30 +44,32 @@ function onDisconnect() {
 }
 
 function onPoll() {
-	console.log(forecastUrl);
+    console.log(forecastUrl);
     var response = http.get(forecastUrl);
-    if (response.data.status.status_code != 0) {
-        console.log("Error: " + response.data.status.status_message);
-    }
+    if (response.status == 200) {
 
-    updateCurrentConditions(response.data.current_conditions);
-    var hStart = 0; // for current day, we want to start with the first available hourly index...
-    var hEnd = getHourlyIndexOfTimecode(response.data.forecast.daily[1].day_start_local, response.data.forecast.hourly);  // ...and we want to stop just before tomorrow's first index
-    var i;
-    for (d=0; d < 10; d++) {
-        updateDailyForecast(d, response.data.forecast.daily[d]);
-        if (d==0) {
-            i = 24 - hEnd;
-        } else {
-            i = 0;
+        updateCurrentConditions(response.data.current_conditions);
+        var hStart = 0; // for current day, we want to start with the first available hourly index...
+        var hEnd = getHourlyIndexOfTimecode(response.data.forecast.daily[1].day_start_local, response.data.forecast.hourly);  // ...and we want to stop just before tomorrow's first index
+        var i;
+        for (d = 0; d < 10; d++) {
+            updateDailyForecast(d, response.data.forecast.daily[d]);
+            if (d == 0) {
+                i = 24 - hEnd;
+            } else {
+                i = 0;
+            }
+            populateHourlyArray(d, hStart, hEnd, i, response.data.forecast.hourly); //hStart = current day's timecode; hEnd = next day's timecode; i = first index to populate in hourly forecast array
+            hStart = hEnd;
+            hEnd += 24;
         }
-        populateHourlyArray(d, hStart, hEnd, i, response.data.forecast.hourly); //hStart = current day's timecode; hEnd = next day's timecode; i = first index to populate in hourly forecast array
-        hStart = hEnd;
-        hEnd +=24; 
-    }
 
-    for (h=0; h < 24; h++) {
-        updateHourlyForecast(h, response.data.forecast.hourly[h]);
+        for (h = 0; h < 24; h++) {
+            updateHourlyForecast(h, response.data.forecast.hourly[h]);
+        }
+    }
+    else {
+        console.log("WeatherFlow plugin error: " + response.status + " " + response.statusText);
     }
 }
 
@@ -111,11 +113,10 @@ function onSynchronizeDevices() {
 
 function getStationID() {
     if (plugin.Settings["StationID"] != "") {
-        console.log("StationID of " + plugin.Settings["StationID"]);
-        return plugin.Settings["StationID"];}
+        return plugin.Settings["StationID"];
+    }
     else {
         var response = http.get("https://swd.weatherflow.com/swd/rest/stations?token=" + plugin.Settings["AccessToken"]);
-        console.log("Station ID calculated as: " + response.data.stations[0].station_id);
         return response.data.stations[0].station_id;
     }
 }
@@ -123,12 +124,9 @@ function getStationID() {
 function updateCurrentConditions(currently) {
     var currentConditions = plugin.Devices["WFCurrent"];
     if (currentConditions != null) {
-        console.log("currently: " + currently);
         currentConditions.Weather = getWeatherConditions(currently.conditions);
-        console.log("Reported conditions of " + currently.conditions + " translated to " + getWeatherConditions(currently.conditions) + " and assigned as " + currentConditions.Weather);
         currentConditions.WeatherIcon = ICON_PREFIX + currently.icon + ICON_SUFFIX;
         currentConditions.Temperature = currently.air_temperature;
-        console.log("Air temp reported as " + currently.air_temperature + " and assigned as " + currentConditions.Temperature);
         currentConditions.Pressure = currently.sea_level_pressure;
         currentConditions.StationPressure = currently.station_pressure;
         currentConditions.PressureTrend = currently.pressure_trend;
@@ -159,57 +157,48 @@ function updateCurrentConditions(currently) {
     }
 }
 
-function updateDailyForecast(d,dayData) {
+function updateDailyForecast(d, dayData) {
     var dayDevice = plugin.Devices["WFDay" + d];
-    console.log("Getting forecast for day " + d);
 
     if (dayDevice != null) {
         if (dayData != null) {
             dayDevice.Day = dayData.day_num;
-            console.log("Day number is " + dayData.day_num + " and recorded as " + dayDevice.Day);
             dayDevice.Month = dayData.month_num;
             dayDevice.DayOfWeek = convertUnixTimeToDayOfWeek(dayData.day_start_local);
-			dayDevice.Weather = getWeatherConditions(dayData.conditions);
-            console.log("Forecast of " + dayData.conditions + " recorded as: " + dayDevice.Weather);
-			dayDevice.WeatherIcon = ICON_PREFIX + dayData.icon + ICON_SUFFIX;
-            console.log("Icon of " + dayData.icon + " recorded as: " + dayDevice.WeatherIcon);
-			dayDevice.Sunrise = convertUnixTimeToLocalTime(dayData.sunrise);
+            dayDevice.Weather = getWeatherConditions(dayData.conditions);
+            dayDevice.WeatherIcon = ICON_PREFIX + dayData.icon + ICON_SUFFIX;
+            dayDevice.Sunrise = convertUnixTimeToLocalTime(dayData.sunrise);
             dayDevice.Sunset = convertUnixTimeToLocalTime(dayData.sunset);
             dayDevice.TemperatureHigh = dayData.air_temp_high;
             dayDevice.TemperatureLow = dayData.air_temp_low;
             dayDevice.PrecipitationProbability = dayData.precip_probability;
-			dayDevice.PrecipitationType = dayData.precip_type;
+            dayDevice.PrecipitationType = dayData.precip_type;
         } else {
-            //Let's consider the possibility the response doesn't have data for all 7 days.
-            //If it doesn't, let's reset the device data so we don't continue to display old data.
             dayDevice.Day = null;
             dayDevice.Month = null;
             dayDevice.DayOfWeek = null;
-			dayDevice.Weather = null;
-			dayDevice.WeatherIcon = null;
-			dayDevice.Sunrise = null;
+            dayDevice.Weather = null;
+            dayDevice.WeatherIcon = null;
+            dayDevice.Sunrise = null;
             dayDevice.Sunset = null;
             dayDevice.TemperatureHigh = null;
             dayDevice.TemperatureLow = null;
             dayDevice.PrecipitationProbability = null;
-			dayDevice.PrecipitationType = null;
+            dayDevice.PrecipitationType = null;
         }
     }
 
-    console.log("Completed forecast update for day " + d);
-
 }
 
-function updateHourlyForecast(h,hourlyData) {
+function updateHourlyForecast(h, hourlyData) {
     var hourDevice = plugin.Devices["WFHour" + h];
 
     if (hourDevice != null) {
         if (hourlyData != null) {
             hourDevice.DayNum = hourlyData.local_day;
             hourDevice.Hour = convertUnixTimeToLocalTime(hourlyData.time);
-			hourDevice.Weather = getWeatherConditions(hourlyData.conditions);
-            console.log("Forecast is for: " + hourDevice.Weather);
-			hourDevice.WeatherIcon = hourlyData.icon;
+            hourDevice.Weather = getWeatherConditions(hourlyData.conditions);
+            hourDevice.WeatherIcon = hourlyData.icon;
             hourDevice.Temperature = hourlyData.air_temperature;
             hourDevice.Pressure = hourlyData.sea_level_pressure;
             hourDevice.Humidity = hourlyData.relative_humidity;
@@ -223,9 +212,8 @@ function updateHourlyForecast(h,hourlyData) {
         } else {
             hourDevice.DayNum = null;
             hourDevice.HourNum = null;
-			hourDevice.Weather = null;
-            console.log("Forecast is for: " + hourDevice.Weather);
-			hourDevice.WeatherIcon = null;
+            hourDevice.Weather = null;
+            hourDevice.WeatherIcon = null;
             hourDevice.Temperature = null;
             hourDevice.Pressure = null;
             hourDevice.Humidity = null;
@@ -247,10 +235,10 @@ function populateHourlyArray(d, hStart, hEnd, i, hourlyData) {
     var hourlyForecast = [];
 
     //For current day, fill already elapsed hours with null data since there's no forecast for them
-    for (pastHour = 0; pastHour <i; pastHour++) {
+    for (pastHour = 0; pastHour < i; pastHour++) {
         let newEntry = {
-            "Id":i,
-            "Description":"--",
+            "Id": i,
+            "Description": "--",
             "Icon": ""
         }
         hourlyForecast[pastHour] = newEntry;
@@ -259,8 +247,8 @@ function populateHourlyArray(d, hStart, hEnd, i, hourlyData) {
     //For the future, fill future hours with their forecasts
     for (h = hStart; h < hEnd; h++) {
         let newEntry = {
-            "Id":i,
-            "Description":hourlyData[h].air_temperature + "\xB0",
+            "Id": i,
+            "Description": hourlyData[h].air_temperature + "\xB0",
             "Icon": ICON_PREFIX + hourlyData[h].icon + ICON_SUFFIX
         }
         hourlyForecast[i] = newEntry;
@@ -271,9 +259,8 @@ function populateHourlyArray(d, hStart, hEnd, i, hourlyData) {
 }
 
 function getWeatherConditions(weather) {
-    switch(weather) {
+    switch (weather) {
         case "Clear":
-            console.log("Weather is clear.");
             return "Clear";
         case "Rain Likely":
         case "Rain Possible":
@@ -298,13 +285,13 @@ function getWeatherConditions(weather) {
         case "Very Light Rain":
             return "Showers";
         default:
-            console.log("Weather hit default without finding a match.");
+            console.log("WeatherFlow plugin: Weather Conditions look-up hit default without finding a match.");
             return "Exceptional";
     }
 }
 
 function getHourlyIndexOfTimecode(timecode, hourlyData) {
-    for (i=0; i<100; i++) {
+    for (i = 0; i < 100; i++) {
         if (hourlyData[i].time == timecode) return i;
     }
     return null;
@@ -315,7 +302,7 @@ function createCurrentCondDevice() {
     pluginDevice.Id = "WFCurrent";
     pluginDevice.DisplayName = "Current Conditions";
     pluginDevice.Name = "CurrentConditions";
-    pluginDevice.Capabilities =  ["IlluminanceMeasurement", "PrecipitationLevelMeasurement", "PrecipitationRateMeasurement", "PressureMeasurement", "RelativeHumidityMeasurement", "TemperatureMeasurement", "UltravioletIndex", "WindDirectionMeasurement", "WindGustMeasurement", "WindMeasurement"];
+    pluginDevice.Capabilities = ["IlluminanceMeasurement", "PrecipitationLevelMeasurement", "PrecipitationRateMeasurement", "PressureMeasurement", "RelativeHumidityMeasurement", "TemperatureMeasurement", "UltravioletIndex", "WindDirectionMeasurement", "WindGustMeasurement", "WindMeasurement"];
     pluginDevice.Attributes = ["Weather", "WeatherIcon", "StationPressure", "PressureTrend", "WindDirectionDegrees", "SolarRadiation", "FeelsLike", "DewPoint", "WetBulbTemp", "DeltaT", "AirDensity", "LightningCount1hr", "LightningCount3hr", "LightningDistance", "LightningDistanceMessage", "LightningStrikeEpoch", "PrecipitationLevelYesterday", "PrecipitationMinutesToday", "PrecipitationMinutesYesterday"];
     return pluginDevice;
 }
@@ -323,7 +310,7 @@ function createCurrentCondDevice() {
 function createDayDevice(number) {
     var pluginDevice = new Device();
     pluginDevice.Id = "WFDay" + number;
-    pluginDevice.DisplayName = "Forecast Day "+ number;
+    pluginDevice.DisplayName = "Forecast Day " + number;
     pluginDevice.DeviceType = "ForecastDay";
     pluginDevice.Icon = "Thermometer";
     pluginDevice.TileTemplate = "ForecastDayTile.xaml";
@@ -336,7 +323,7 @@ function createDayDevice(number) {
 function createHourDevice(number) {
     var pluginDevice = new Device();
     pluginDevice.Id = "WFHour" + number;
-    pluginDevice.DisplayName = "Forecast Hour "+ number;
+    pluginDevice.DisplayName = "Forecast Hour " + number;
     pluginDevice.DeviceType = "ForecastHour";
     pluginDevice.Icon = "Thermometer";
     pluginDevice.TileTemplate = "ForecastHourTile.xaml";
@@ -379,12 +366,12 @@ function convertUnixTimeToDayOfWeek(unixTime) {
 function convertUnixTimeToLocalTime(unixTime) {
     var jsDate = new Date(unixTime * 1000);
     var hr = jsDate.getHours();
-    var min  = jsDate.getMinutes();
+    var min = jsDate.getMinutes();
     if (min < 10) {
         min = "0" + min;
     }
     var ampm = "AM";
-    if( hr > 12 ) {
+    if (hr > 12) {
         hr -= 12;
         ampm = "PM";
     }
